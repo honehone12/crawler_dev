@@ -82,6 +82,11 @@ async fn get_link(a: Element, current: &Url) -> anyhow::Result<String> {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().init();
     let target = Target::parse();
+    let target_url = Url::parse(&target.url)?;
+    let Some(title) = target_url.domain() else {
+        bail!("failed to get domain");
+    };
+
     let mut cap = Map::new();
     cap.insert("moz:firefoxOptions".to_string(), json!({"args": ["-headless"]}));
 
@@ -91,13 +96,12 @@ async fn main() -> anyhow::Result<()> {
     c.set_ua("Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:141.0) Gecko/20100101 Firefox/141.0").await?;
  
     c.goto(&target.url).await?;
-    c.wait().for_url(&Url::parse(&target.url)?).await?;
-    let title = c.title().await?;
+    c.wait().for_url(&target_url).await?;
+    
     fs::create_dir(&title).await?;
 
     let html = c.source().await?;
-    let name = target.url.replace('/', "$");
-    fs::write(format!("{title}/{name}.html"), html).await?;
+    fs::write(format!("{title}/index.html"), html).await?;
     
     {
         let mut list = vec![];
