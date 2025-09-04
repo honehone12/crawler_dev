@@ -1,4 +1,4 @@
-use serde_json::json;
+use serde_json::{json, Map};
 use tokio::fs;
 use anyhow::bail;
 use tracing::{info, warn};
@@ -82,8 +82,12 @@ async fn get_link(a: Element, current: &Url) -> anyhow::Result<String> {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().init();
     let target = Target::parse();
+    let mut cap = Map::new();
+    cap.insert("moz:firefoxOptions".to_string(), json!({"args": ["-headless"]}));
 
-    let c = ClientBuilder::native().connect("htpp://localhost:4444").await?;
+    let c = ClientBuilder::native()
+        .capabilities(cap)
+        .connect("htpp://localhost:4444").await?;
     c.set_ua("Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:141.0) Gecko/20100101 Firefox/141.0").await?;
  
     c.goto(&target.url).await?;
