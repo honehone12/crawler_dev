@@ -20,10 +20,10 @@ async fn get_img(img: Element) -> anyhow::Result<(String, Bytes)> {
         bail!("could not find img src");
     };
     if src.starts_with("data:") {
-        bail!("could not handle data url");
+        bail!("could not handle data url: {src}");
     }
     if !src.ends_with(".jpg") && !src.ends_with(".png") && !src.ends_with(".webp") {
-        bail!("unsupported file");    
+        bail!("unsupported file: {src}");    
     }
 
     let raw = img.client().raw_client_for(Method::GET, &src).await?;
@@ -33,11 +33,11 @@ async fn get_img(img: Element) -> anyhow::Result<(String, Bytes)> {
 
 fn rename(name: &str) -> anyhow::Result<String> {
     if !name.ends_with(".jpg") && !name.ends_with(".png") && !name.ends_with(".webp") {
-        bail!("unsupported file");
+        bail!("unsupported file: {name}");
     }
 
     let Some(ex) = name.split('.').last() else {
-        bail!("could not find file extension");
+        bail!("could not find file extension: {name}");
     };
     let hash = blake3::hash(name.as_bytes());
     let name = format!("{}.{ex}", hex::encode(hash.as_bytes()));
@@ -51,12 +51,12 @@ async fn get_video_src(iframe: Element) -> anyhow::Result<(String, String)> {
     if !src.starts_with("https://www.youtube.com/embed/") 
         && !src.starts_with("https://www.youtube-nocookie.com/embed/") 
     {
-        bail!("could not finc video src");
+        bail!("could not find video src");
     }
 
     let url = Url::parse(&src)?;
     let Some(mut path) = url.path_segments() else {
-        bail!("could not find path segments");
+        bail!("could not find path segments: {src}");
     };
     _ = path.next();
     let Some(id) = path.next() else {
@@ -98,24 +98,30 @@ async fn main() -> anyhow::Result<()> {
     c.goto(&target.url).await?;
     c.wait().for_url(&target_url).await?;
     
-    fs::create_dir(&title).await?;
+    fs::create_dir(format!("output/{title}")).await?;
 
     let html = c.source().await?;
-    fs::write(format!("{title}/index.html"), html).await?;
+    fs::write(format!("output/{title}/index.html"), html).await?;
     
     {
         let mut list = vec![];
         let imgs = c.find_all(Locator::Css("img")).await?;
         for img in imgs {
-            let Ok((src, b)) = get_img(img).await else {
-                warn!("failed to resolve image");
-                continue;
+            let (src, b) = match get_img(img).await {
+                Ok(i) => i,
+                Err(e) => {
+                    warn!("{e}");
+                    continue;
+                }
             };
-            let Ok(name) = rename(&src) else {
-                warn!("failed to rename iamge");
-                continue;
+            let name = match rename(&src) {
+                Ok(n) => n,
+                Err(e) => {
+                    warn!("{e}");
+                    continue;
+                }
             };
-            fs::write(format!("{title}/{name}"), b).await?;
+            fs::write(format!("output/{title}/{name}"), b).await?;
 
             list.push(json!({
                 "src": src,
@@ -124,16 +130,19 @@ async fn main() -> anyhow::Result<()> {
         }
 
         let json = serde_json::to_string_pretty(&list)?;
-        fs::write(format!("{title}/images.json"), json).await?;
+        fs::write(format!("output/{title}/images.json"), json).await?;
     }
 
     {
         let mut list = vec![];
         let iframes = c.find_all(Locator::Css("iframe")).await?;
         for iframe in iframes {
-            let Ok((src, id)) = get_video_src(iframe).await else {
-                warn!("failed to resolve video src");
-                continue;
+            let (src, id) = match get_video_src(iframe).await {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!("{e}");
+                    continue;
+                }
             };
 
             list.push(json!({
@@ -143,7 +152,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         let json = serde_json::to_string_pretty(&list)?;
-        fs::write(format!("{title}/videos.json"), json).await?;
+        fs::write(format!("output/{title}/videos.json"), json).await?;
     }
 
     {
@@ -151,16 +160,19 @@ async fn main() -> anyhow::Result<()> {
         let current = c.current_url().await?;
         let links = c.find_all(Locator::Css("a")).await?;
         for link in links {
-            let Ok(src) = get_link(link, &current).await else {
-                warn!("failed to resolve link");
-                continue;
+            let src = match get_link(link, &current).await {
+                Ok(l) => l,
+                Err(e) => {
+                    warn!("{e}");
+                    continue;
+                }
             };
 
             list.push(src);
         }
 
         let json = serde_json::to_string_pretty(&list)?;
-        fs::write(format!("{title}/links.json"), json).await?;
+        fs::write(format!("output/{title}/links.json"), json).await?;
     }
 
     c.close().await?;
