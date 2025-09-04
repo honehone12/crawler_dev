@@ -88,7 +88,10 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let mut cap = Map::new();
-    cap.insert("moz:firefoxOptions".to_string(), json!({"args": ["-headless"]}));
+    cap.insert("moz:firefoxOptions".to_string(), json!({
+        "args": ["-headless"],
+        "log": json!({"level": "error"})
+    }));
 
     let c = ClientBuilder::native()
         .capabilities(cap)
@@ -99,9 +102,6 @@ async fn main() -> anyhow::Result<()> {
     c.wait().for_url(&target_url).await?;
     
     fs::create_dir(format!("output/{title}")).await?;
-
-    let html = c.source().await?;
-    fs::write(format!("output/{title}/index.html"), html).await?;
     
     {
         let mut list = vec![];
@@ -157,10 +157,9 @@ async fn main() -> anyhow::Result<()> {
 
     {
         let mut list = vec![];
-        let current = c.current_url().await?;
         let links = c.find_all(Locator::Css("a")).await?;
         for link in links {
-            let src = match get_link(link, &current).await {
+            let src = match get_link(link, &target_url).await {
                 Ok(l) => l,
                 Err(e) => {
                     warn!("{e}");
@@ -174,6 +173,9 @@ async fn main() -> anyhow::Result<()> {
         let json = serde_json::to_string_pretty(&list)?;
         fs::write(format!("output/{title}/links.json"), json).await?;
     }
+
+    let html = c.source().await?;
+    fs::write(format!("output/{title}/index.html"), html).await?;
 
     c.close().await?;
     info!("done");
