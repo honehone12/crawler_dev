@@ -2,10 +2,10 @@ use serde_json::{json, Map};
 use tokio::fs;
 use anyhow::bail;
 use tracing::{info, warn};
-use http::Method;
+use reqwest::Client as HttpClient;
+use http::StatusCode;
 use url::Url;
 use bytes::Bytes;
-use http_body_util::BodyExt;
 use fantoccini::{elements::Element, ClientBuilder, Locator};
 use clap::Parser;
 
@@ -15,29 +15,36 @@ struct Target {
     url: String
 }
 
-async fn get_img(img: Element) -> anyhow::Result<(String, Bytes)> {
+const UA: &str = "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:141.0) Gecko/20100101 Firefox/141.0";
+
+async fn get_img(img: Element, current: &Url, http_client: &HttpClient) -> anyhow::Result<(String, Bytes)> {
     let Some(src) = img.attr("src").await? else {
         bail!("could not find img src");
     };
     if src.starts_with("data:") {
-        bail!("could not handle data url: {src}");
+        bail!("could not handle data url");
     }
     if !src.ends_with(".jpg") && !src.ends_with(".png") && !src.ends_with(".webp") {
-        bail!("unsupported file: {src}");    
+        bail!("unsupported file");    
     }
 
-    let raw = img.client().raw_client_for(Method::GET, &src).await?;
-    let body = raw.into_body().collect().await?.to_bytes();
+    let url = current.join(&src)?;
+    let res = http_client.get(url).send().await?;
+    if res.status() != StatusCode::OK {
+        bail!("failed to fetch image: {src}");
+    }
+    let body = res.bytes().await?;
+
     Ok((src, body))
 }
 
 fn rename(name: &str) -> anyhow::Result<String> {
     if !name.ends_with(".jpg") && !name.ends_with(".png") && !name.ends_with(".webp") {
-        bail!("unsupported file: {name}");
+        bail!("unsupported file");
     }
 
     let Some(ex) = name.split('.').last() else {
-        bail!("could not find file extension: {name}");
+        bail!("could not find file extension");
     };
     let hash = blake3::hash(name.as_bytes());
     let name = format!("{}.{ex}", hex::encode(hash.as_bytes()));
@@ -87,6 +94,8 @@ async fn main() -> anyhow::Result<()> {
         bail!("failed to get domain");
     };
 
+    let http_client = HttpClient::builder().user_agent(UA).build()?;
+
     let mut cap = Map::new();
     cap.insert("moz:firefoxOptions".to_string(), json!({
         "args": ["-headless"],
@@ -96,18 +105,18 @@ async fn main() -> anyhow::Result<()> {
     let c = ClientBuilder::native()
         .capabilities(cap)
         .connect("htpp://localhost:4444").await?;
-    c.set_ua("Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:141.0) Gecko/20100101 Firefox/141.0").await?;
+    c.set_ua(UA).await?;
  
     c.goto(&target.url).await?;
     c.wait().for_url(&target_url).await?;
-    
+
     fs::create_dir(format!("output/{title}")).await?;
     
     {
         let mut list = vec![];
         let imgs = c.find_all(Locator::Css("img")).await?;
         for img in imgs {
-            let (src, b) = match get_img(img).await {
+            let (src, b) = match get_img(img, &target_url, &http_client).await {
                 Ok(i) => i,
                 Err(e) => {
                     warn!("{e}");
