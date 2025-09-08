@@ -104,7 +104,7 @@ async fn main() -> anyhow::Result<()> {
 
     let c = ClientBuilder::native()
         .capabilities(cap)
-        .connect("htpp://localhost:4444").await?;
+        .connect("http://localhost:4444").await?;
     c.set_ua(UA).await?;
  
     c.goto(&target.url).await?;
